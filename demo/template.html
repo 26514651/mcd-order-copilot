@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>点单参谋 · 麦当劳餐品营养成分速查</title>
+<meta name="description" content="在麦当劳点单前，先看清这顿的蛋白、碳水、脂肪和热量。数据来自麦当劳 MCP 官方接口。">
+<meta name="theme-color" content="#FFFCF3">
+<!-- Home-screen install: keeps the tool one tap away instead of a URL to retype. -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="点单参谋">
+<link rel="apple-touch-icon" href="data:image/png;base64,__ICON_B64__">
+<link rel="icon" type="image/png" href="data:image/png;base64,__ICON_B64__">
+<style>
+/* ------------------------------------------------------------------ tokens
+   骨架走中性暖调（高级感来自克制），品牌色按"大量金 + 少量红点缀"分层：
+   浅金做容器（约 20% 面积），品牌黄原色只做焦点（约 5%），宝石红做强调（约 5%）。
+   颜色是通用资产，Logo 是注册资产 —— 这里只用颜色，不用任何官方标志。
+------------------------------------------------------------------------- */
+:root{
+  --paper:#FFFCF3; --paper-2:#FFF7E6; --container:#FFF4D6;
+  --gold:#FFC72C; --gold-deep:#C9991F; --ruby:#A8121A; --ruby-soft:#C9463C;
+  --ink:#2B1D12; --ink-2:#6B5A4C; --ink-3:#A08A72; --line:#EDE2CF;
+  --ok:#2F7D4F;
+  --radius-card:14px; --radius-el:8px; --radius-pill:999px;
+  --shadow-1:0 1px 2px rgba(43,29,18,.05), 0 4px 14px rgba(43,29,18,.05);
+  --shadow-2:0 8px 32px rgba(43,29,18,.14);
+  --font:"MiSans","HarmonyOS Sans SC","PingFang SC","Source Han Sans SC","Noto Sans CJK SC","Microsoft YaHei UI",system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--font); background:var(--paper); color:var(--ink);
+  font-size:14px; font-weight:500; line-height:1.55;
+  letter-spacing:.2px; -webkit-font-smoothing:antialiased;
+}
+.num{font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1}
+button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit}
+
+/* ------------------------------------------------------------------- shell */
+.wrap{max-width:520px; margin:0 auto; padding:0 14px 96px}
+.topbar{
+  position:sticky; top:0; z-index:30; background:rgba(255,252,243,.92);
+  backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line); margin:0 -14px 0; padding:12px 14px 10px;
+}
+.topbar-row{display:flex; align-items:center; gap:10px}
+.brand{display:flex; align-items:center; gap:9px; min-width:0}
+.brand-mark{width:26px;height:26px;flex:0 0 26px;display:grid;place-items:end center;
+  background:var(--container);border-radius:7px;padding:5px 4px;gap:2px}
+.brand-mark i{display:block;width:3.5px;background:var(--gold-deep);border-radius:1px}
+.brand-mark i:nth-child(1){height:5px;opacity:.45}
+.brand-mark i:nth-child(2){height:9px;opacity:.72}
+.brand-mark i:nth-child(3){height:13px}
+.brand h1{margin:0;font-size:17px;font-weight:700;letter-spacing:.2px;white-space:nowrap}
+.brand .sub{font-size:11px;color:var(--ink-3);font-weight:500;margin-top:1px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.topbar-right{margin-left:auto;text-align:right;flex:0 0 auto}
+.pill-mini{display:inline-block;font-size:10.5px;font-weight:600;color:var(--gold-deep);
+  background:var(--container);border-radius:var(--radius-pill);padding:3px 8px;letter-spacing:.4px}
+
+/* ------------------------------------------------------------------- intro */
+.intro{padding:16px 2px 12px}
+.intro h2{margin:0 0 3px;font-size:20px;font-weight:700;letter-spacing:.1px}
+.intro p{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.6}
+.intro .fresh{display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:11.5px;
+  color:var(--ink-2);background:var(--container);border-radius:var(--radius-pill);padding:4px 10px}
+.dot-live{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:0 0 6px}
+
+/* ------------------------------------------------------------------ presets */
+.section-label{font-size:11px;font-weight:700;color:var(--ink-3);letter-spacing:1.2px;
+  text-transform:uppercase;margin:16px 0 8px 2px}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{
+  font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:var(--radius-pill);
+  background:var(--paper-2);border:1.5px solid var(--line);color:var(--ink-2);
+  transition:transform .12s, background .16s, border-color .16s, color .16s;
+}
+.chip:active{transform:scale(.95)}
+.chip[aria-pressed="true"]{background:var(--gold);border-color:var(--gold);color:#3A2500;
+  box-shadow:0 2px 10px rgba(255,199,44,.4)}
+.chip.plain[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper);box-shadow:none}
+
+/* -------------------------------------------------------------------- store
+   实时门店。默认收起为一句说明，只有后端可用时才展开输入框 —— 静态单文件
+   打开时，不该摆出一个点了没反应的按钮。
+------------------------------------------------------------------------- */
+.storecard{background:var(--paper-2);border:1.5px solid var(--line);border-radius:var(--radius-card);
+  padding:12px;margin-top:10px}
+.storetop{display:flex;align-items:flex-start;gap:8px}
+.storetag{flex:0 0 auto;font-size:10.5px;font-weight:700;letter-spacing:.6px;border-radius:var(--radius-pill);
+  padding:3px 8px;background:var(--container);color:var(--gold-deep);margin-top:1px}
+.storetag.live{background:var(--ok);color:#fff}
+.storetext{margin:0;font-size:11.5px;color:var(--ink-2);line-height:1.55}
+.storetext code{background:var(--container);border-radius:4px;padding:1px 4px;font-size:11px}
+.srow2{display:flex;gap:8px;margin-top:9px}
+.srow2 input{
+  flex:1 1 0;min-width:0;font-family:var(--font);font-size:13.5px;font-weight:600;color:var(--ink);
+  background:#fff;border:1.5px solid var(--line);border-radius:var(--radius-el);padding:9px 10px;outline:none;
+}
+.srow2 input:focus{border-color:var(--gold)}
+.srow2 input::placeholder{color:var(--ink-3);font-weight:500}
+.sbtn{font-family:var(--font);font-size:13.5px;font-weight:700;border-radius:var(--radius-el);padding:9px 14px;
+  transition:transform .12s, opacity .16s}
+.sbtn:active{transform:scale(.98)}
+.sbtn.primary{width:100%;margin-top:9px;background:var(--gold);color:#3A2500;
+  box-shadow:0 2px 10px rgba(255,199,44,.35)}
+.sbtn.primary:disabled{opacity:.55;box-shadow:none}
+.sbtn.ghost{flex:0 0 auto;background:#fff;border:1.5px solid var(--line);color:var(--ink-2);padding:9px 11px}
+.smsg{margin:8px 0 0;font-size:11.5px;color:var(--ink-2);line-height:1.5}
+.smsg.err{color:var(--ruby)}
+.smsg.ok{color:var(--ok)}
+.slist{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.sitem{display:flex;align-items:center;gap:9px;text-align:left;width:100%;background:#fff;
+  border:1.5px solid var(--line);border-radius:var(--radius-el);padding:9px 10px;transition:border-color .16s}
+.sitem:active{border-color:var(--gold)}
+.sitem .sname{font-size:13px;font-weight:600;color:var(--ink);line-height:1.35}
+.sitem .saddr{font-size:11px;color:var(--ink-3);margin-top:2px;line-height:1.4}
+.sitem .sright{margin-left:auto;text-align:right;flex:0 0 auto}
+.sitem .sdist{font-size:12px;font-weight:700;color:var(--gold-deep)}
+.sitem .sopen{font-size:10.5px;color:var(--ok);font-weight:600}
+.sitem .sopen.shut{color:var(--ink-3)}
+
+/* ------------------------------------------------------------------ targets */
+.targets{background:var(--container);border-radius:var(--radius-card);padding:4px;margin-top:10px}
+.trow{display:flex;align-items:center;gap:10px;padding:9px 8px 9px 10px;border-radius:var(--radius-el);
+  transition:background .16s}
+.trow.on{background:#fff}
+.trow + .trow{margin-top:1px}
+.trow .tname{font-size:13px;font-weight:600;flex:0 0 auto;min-width:44px}
+.trow .tunit{font-size:11.5px;color:var(--ink-3);font-weight:500;flex:0 0 auto}
+.trow input[type=number]{
+  width:78px;margin-left:auto;text-align:right;font-size:17px;font-weight:700;
+  font-family:var(--font);font-variant-numeric:tabular-nums;color:var(--ink);
+  background:transparent;border:none;border-bottom:1.5px dashed var(--line);
+  padding:2px 2px 3px;outline:none;letter-spacing:-.3px;
+}
+.trow input[type=number]:disabled{color:var(--ink-3);border-bottom-color:transparent}
+.trow input[type=number]::-webkit-outer-spin-button,
+.trow input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.trow input[type=number]{-moz-appearance:textfield;appearance:textfield}
+/* switch */
+.sw{flex:0 0 40px;width:40px;height:23px;border-radius:var(--radius-pill);background:#E2D6C0;
+  position:relative;transition:background .18s;padding:0}
+.sw::after{content:"";position:absolute;top:2.5px;left:2.5px;width:18px;height:18px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(43,29,18,.24);transition:transform .18s}
+.sw[aria-checked="true"]{background:var(--ruby)}
+.sw[aria-checked="true"]::after{transform:translateX(17px)}
+/* weight */
+.weight{display:flex;align-items:center;gap:8px;padding:10px 10px 8px;border-top:1px solid #F3E6CC;margin-top:4px}
+.weight label{font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.weight input{width:56px;text-align:right;font-size:15px;font-weight:700;background:#fff;
+  border:1.5px solid var(--line);border-radius:var(--radius-el);padding:5px 8px;outline:none;
+  font-family:var(--font);font-variant-numeric:tabular-nums}
+.weight .hint{font-size:11px;color:var(--ink-3);margin-left:auto;text-align:right}
+
+.note{margin:9px 2px 0;font-size:11.5px;color:var(--ink-3);line-height:1.55}
+.note b{color:var(--ink-2);font-weight:600}
+
+/* The basis behind each preset threshold. Collapsed until a preset is picked. */
+.basis{margin:10px 2px 0;padding:11px 12px;background:#fff;border:1px solid var(--line);
+  border-radius:var(--radius-el)}
+.basis .bh{font-size:11.5px;font-weight:700;color:var(--ink-2)}
+.basis .bs{font-size:11px;color:var(--ink-3);line-height:1.5;margin:3px 0 2px}
+.basis .bi{display:flex;gap:8px;font-size:11.5px;line-height:1.6;color:var(--ink-3);margin-top:6px}
+.basis .bi b{flex:0 0 auto;min-width:30px;color:var(--ink-2);font-weight:600}
+.basis .bi.act b::after{content:" ●";color:var(--ruby);font-size:9px;vertical-align:1px}
+
+/* ------------------------------------------------------------------- result */
+.resulthead{display:flex;align-items:baseline;gap:8px;margin:22px 2px 11px}
+.resulthead .big{font-size:23px;font-weight:700;letter-spacing:-.4px}
+.resulthead .small{font-size:12.5px;color:var(--ink-2)}
+.resulthead .sortbtn{margin-left:auto;font-size:12px;font-weight:600;color:var(--ruby);
+  background:rgba(168,18,26,.07);border-radius:var(--radius-pill);padding:6px 11px}
+.sortbar{display:flex;gap:6px;overflow-x:auto;padding:0 0 10px;scrollbar-width:none}
+.sortbar::-webkit-scrollbar{display:none}
+.sortbar button{font-size:12px;font-weight:600;white-space:nowrap;padding:6px 11px;
+  border-radius:var(--radius-pill);background:var(--paper-2);border:1px solid var(--line);color:var(--ink-2)}
+.sortbar button[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+
+/* --------------------------------------------------------------------- card */
+.card{
+  display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;
+  background:#fff;border:1px solid var(--line);border-radius:var(--radius-card);
+  padding:12px;margin-bottom:9px;box-shadow:var(--shadow-1);
+  transition:transform .12s, box-shadow .18s;
+}
+.card:active{transform:scale(.985);box-shadow:var(--shadow-2)}
+.thumb{width:74px;height:74px;flex:0 0 74px;border-radius:11px;background:var(--paper-2);
+  object-fit:contain;position:relative;overflow:hidden}
+.thumb img{width:100%;height:100%;object-fit:contain;display:block}
+.card-body{flex:1 1 auto;min-width:0}
+.card-name{font-size:16px;font-weight:700;letter-spacing:.1px;line-height:1.3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-meta{display:flex;align-items:center;gap:7px;margin-top:3px}
+.price{font-size:13px;font-weight:700;color:var(--ruby)}
+.price .sym{font-size:11px;margin-right:.5px}
+.card-nums{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 15px;margin-top:8px}
+.numbox{display:flex;flex-direction:column;align-items:flex-start}
+.numbox .top{display:flex;align-items:baseline;gap:2.5px}
+.numbox .v{font-size:21px;font-weight:700;letter-spacing:-.9px;line-height:1}
+.numbox .u{font-size:10px;font-weight:600;color:var(--ink-3);letter-spacing:.2px}
+.numbox .lb{font-size:9.5px;font-weight:600;color:var(--ink-3);letter-spacing:.5px;margin-top:2px}
+.numbox.kcal .v{color:var(--ink)}
+.numbox.pro .v{color:var(--ok)}
+.numbox.carb .v{color:#B26A00}
+.numbox.fat .v{color:var(--ruby-soft)}
+.filters{display:flex;gap:6px;padding:0 0 8px}
+.filters button{font-size:12px;font-weight:600;padding:6px 12px;border-radius:var(--radius-pill);
+  background:var(--paper-2);border:1.5px solid var(--line);color:var(--ink-2)}
+.filters button[aria-pressed="true"]{background:var(--gold);border-color:var(--gold);color:#3A2500}
+.tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.tag{font-size:10.5px;font-weight:600;padding:2.5px 7px;border-radius:var(--radius-pill);
+  background:var(--paper-2);color:var(--ink-2);letter-spacing:.2px}
+.tag.gold{background:var(--container);color:#8A6400}
+.tag.ruby{background:rgba(168,18,26,.08);color:var(--ruby)}
+.tag.combo{background:rgba(47,125,79,.1);color:var(--ok)}
+.card .chev{flex:0 0 auto;align-self:center;color:var(--ink-3);font-size:15px;opacity:.7}
+.nodata{font-size:12px;color:var(--ink-3);margin-top:7px;font-weight:500}
+
+/* ------------------------------------------------------------------- empty */
+.empty{text-align:center;padding:34px 20px;background:var(--paper-2);border-radius:var(--radius-card);
+  border:1px dashed var(--line)}
+.empty .em{font-size:26px;margin-bottom:8px}
+.empty h3{margin:0 0 5px;font-size:15px;font-weight:700}
+.empty p{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.6}
+
+/* ------------------------------------------------------------------- sheet */
+.mask{position:fixed;inset:0;background:rgba(43,29,18,.42);opacity:0;pointer-events:none;
+  transition:opacity .26s;z-index:50;backdrop-filter:blur(2px)}
+.mask.on{opacity:1;pointer-events:auto}
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;z-index:60;background:var(--paper);
+  border-radius:20px 20px 0 0;max-height:88vh;overflow-y:auto;overscroll-behavior:contain;
+  transform:translateY(100%);transition:transform .32s cubic-bezier(.32,.72,0,1);
+  box-shadow:0 -8px 40px rgba(43,29,18,.22);
+}
+.sheet.on{transform:translateY(0)}
+.sheet-inner{max-width:520px;margin:0 auto;padding:8px 18px 34px}
+.grab{width:38px;height:4px;border-radius:2px;background:#E0D2B8;margin:6px auto 12px}
+.sheet-head{display:flex;gap:14px;align-items:flex-start}
+.sheet-head img{width:104px;height:104px;flex:0 0 104px;object-fit:contain;background:var(--paper-2);
+  border-radius:14px}
+.sheet-head h3{margin:0;font-size:19px;font-weight:700;line-height:1.32}
+.sheet-head .smeta{font-size:12px;color:var(--ink-2);margin-top:5px}
+.sheet-head .sprice{font-size:17px;font-weight:700;color:var(--ruby);margin-top:7px}
+.block{margin-top:20px}
+.block h4{margin:0 0 10px;font-size:11px;font-weight:700;color:var(--ink-3);
+  letter-spacing:1.2px;text-transform:uppercase}
+.grid6{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+  border-radius:var(--radius-el);overflow:hidden}
+.grid6 .cell{background:#fff;padding:11px 10px 10px}
+.grid6 .cell .k{font-size:11px;color:var(--ink-3);font-weight:600}
+.grid6 .cell .v{font-size:19px;font-weight:700;letter-spacing:-.6px;margin-top:2px}
+.grid6 .cell .v em{font-size:10.5px;font-style:normal;color:var(--ink-3);font-weight:600;margin-left:1px}
+.grid6 .cell.hero .v{color:var(--ink)}
+.lines{list-style:none;margin:0;padding:0;background:#fff;border-radius:var(--radius-el);
+  border:1px solid var(--line);overflow:hidden}
+.lines li{display:flex;align-items:baseline;gap:10px;padding:10px 12px;font-size:13.5px}
+.lines li + li{border-top:1px solid var(--line)}
+.lines li .n{flex:1 1 auto;min-width:0;font-weight:600}
+.lines li .d{font-size:10.5px;color:var(--ink-3);font-weight:600}
+.lines li .v{margin-left:auto;font-weight:700;letter-spacing:-.3px;white-space:nowrap}
+.lines li.plus .v{color:var(--ruby-soft)}
+.lines li.minus .v{color:var(--ok)}
+.lines li .dx{font-size:11.5px;font-weight:700;color:var(--ink-2);margin-left:8px}
+.swaps{display:flex;flex-wrap:wrap;gap:6px}
+.swap{font-size:12px;font-weight:600;padding:7px 11px;border-radius:var(--radius-pill);
+  background:var(--paper-2);border:1.5px solid var(--line);color:var(--ink-2)}
+.swap[aria-pressed="true"]{background:var(--container);border-color:var(--gold);color:#7A5800}
+.srow{display:flex;align-items:center;gap:9px;padding:9px 11px;background:#fff;
+  border:1px solid var(--line);border-radius:var(--radius-el);margin-bottom:7px}
+.srow .sname{font-size:13.5px;font-weight:600;flex:1 1 auto}
+.srow .sdelta{font-size:12.5px;font-weight:700;white-space:nowrap}
+.srow .sdelta.up{color:var(--ruby-soft)}
+.srow .sdelta.down{color:var(--ok)}
+.srow .sdelta.flat{color:var(--ink-3)}
+.srcbar{margin-top:20px;padding:11px 12px;background:var(--paper-2);border-radius:var(--radius-el);
+  font-size:11.5px;color:var(--ink-2);line-height:1.65}
+.srcbar b{font-weight:700;color:var(--ink)}
+.warn{margin-top:12px;padding:11px 12px;border-left:3px solid var(--gold);background:#FFFBF0;
+  border-radius:0 var(--radius-el) var(--radius-el) 0;font-size:12px;color:var(--ink-2);line-height:1.6}
+
+/* ------------------------------------------------------------------ footer */
+.foot{margin-top:30px;padding:18px 4px 8px;border-top:1px solid var(--line);
+  font-size:11.5px;color:var(--ink-3);line-height:1.75}
+.foot b{color:var(--ink-2);font-weight:600}
+.foot a{color:var(--ruby);text-decoration:none;font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="topbar">
+    <div class="topbar-row">
+      <div class="brand">
+        <div class="brand-mark"><i></i><i></i><i></i></div>
+        <div>
+          <h1>点单参谋</h1>
+          <div class="sub" id="storeLine">正在读取门店…</div>
+        </div>
+      </div>
+      <div class="topbar-right"><span class="pill-mini" id="modePill">演示数据</span></div>
+    </div>
+  </header>
+
+  <section class="intro">
+    <h2>今天想控什么？</h2>
+    <p>不用选身份，选你今天在意的那几个数字就行。全都不选也没关系——菜单会完整铺给你。</p>
+    <div class="fresh"><span class="dot-live"></span><span id="snapshotLine">数据快照</span></div>
+  </section>
+
+  <div class="section-label">门店</div>
+  <div class="storecard">
+    <div class="storetop">
+      <span class="storetag" id="storeTag">快照</span>
+      <span class="storetext" id="storeText">现在用的是快照数据。选一家门店，就能换成它此刻真正在售的菜单 —— 每家店今天有什么，并不完全一样。</span>
+    </div>
+
+    <div id="storeForm" hidden>
+      <div class="srow2">
+        <input id="cityInput" type="text" enterkeyhint="search" placeholder="城市，如 广州" autocomplete="off">
+        <input id="kwInput" type="text" enterkeyhint="search" placeholder="位置或门店，如 天河" autocomplete="off">
+      </div>
+      <div class="srow2">
+        <input id="tokenInput" type="password" placeholder="MCP Token" autocomplete="off"
+               spellcheck="false" autocapitalize="off">
+        <button class="sbtn ghost" id="tokenToggle" type="button">显示</button>
+      </div>
+      <button class="sbtn primary" id="findBtn" type="button">查找附近门店</button>
+      <p class="smsg" id="storeMsg"></p>
+      <div class="slist" id="storeList"></div>
+    </div>
+
+    <p class="storetext" id="storeOff" hidden>
+      麦当劳接口没有开放跨域，浏览器不能直接连它，所以实时选店需要一个后端转发。
+      在电脑上运行 <code>python server.py</code> 再打开本页即可；也可以直接看下面的快照数据。
+    </p>
+  </div>
+
+  <div class="section-label">一键套用</div>
+  <div class="chips" id="presetChips"></div>
+
+  <div class="section-label">今日参数</div>
+  <div class="targets">
+    <div class="trow" data-field="kcal_max">
+      <button class="sw" role="switch" aria-checked="false" aria-label="启用热量上限"></button>
+      <span class="tname">热量</span><span class="tunit">≤ kcal</span>
+      <input type="number" inputmode="numeric" placeholder="—" disabled>
+    </div>
+    <div class="trow" data-field="protein_min">
+      <button class="sw" role="switch" aria-checked="false" aria-label="启用蛋白质下限"></button>
+      <span class="tname">蛋白</span><span class="tunit">≥ g</span>
+      <input type="number" inputmode="numeric" placeholder="—" disabled>
+    </div>
+    <div class="trow" data-field="carb_max">
+      <button class="sw" role="switch" aria-checked="false" aria-label="启用碳水上限"></button>
+      <span class="tname">碳水</span><span class="tunit">≤ g</span>
+      <input type="number" inputmode="numeric" placeholder="—" disabled>
+    </div>
+    <div class="trow" data-field="fat_max">
+      <button class="sw" role="switch" aria-checked="false" aria-label="启用脂肪上限"></button>
+      <span class="tname">脂肪</span><span class="tunit">≤ g</span>
+      <input type="number" inputmode="numeric" placeholder="—" disabled>
+    </div>
+    <div class="trow" data-field="sodium_max">
+      <button class="sw" role="switch" aria-checked="false" aria-label="启用钠上限"></button>
+      <span class="tname">钠</span><span class="tunit">≤ mg</span>
+      <input type="number" inputmode="numeric" placeholder="—" disabled>
+    </div>
+    <div class="weight">
+      <label for="weightInput">体重（可选）</label>
+      <input id="weightInput" type="number" inputmode="decimal" placeholder="—">
+      <span class="tunit">kg</span>
+      <span class="hint" id="weightHint">填了按体重折算</span>
+    </div>
+  </div>
+  <p class="note" id="reasonNote">参考值来自公开共识区间，<b>不是营养处方</b>。想自己定就打开上面的开关。</p>
+
+  <div class="basis" id="basisBox" hidden></div>
+
+  <div class="resulthead">
+    <span class="big num" id="matchCount">—</span>
+    <span class="small" id="matchLabel">项符合</span>
+  </div>
+  <div class="filters" id="filterBar"></div>
+  <div class="sortbar" id="sortBar"></div>
+
+  <div id="list"></div>
+
+  <footer class="foot">
+    <p><b>数据来源</b>：麦当劳官方接口。本项目<b>非麦当劳官方产品</b>，营养信息仅供参考，不构成医疗或营养建议。</p>
+    <p><a href="https://github.com/26514651/mcd-order-copilot">github.com/26514651/mcd-order-copilot</a></p>
+  </footer>
+</div>
+
+<div class="mask" id="mask"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="sheet-inner">
+    <div class="grab"></div>
+    <div id="sheetContent"></div>
+  </div>
+</div>
+
+<script>
+window.__DEMO__ = __DEMO_DATA__;
+</script>
+<script>
+(function(){
+"use strict";
+
+/* ------------------------------------------------------------------ helpers */
+var D = window.__DEMO__ || {};
+var ITEMS = D.items || [];
+var PRESETS = D.presets || [];
+var STORE = D.store || {};
+var META = D.meta || {};
+var SORTS = [
+  {k:"protein", label:"按蛋白高 → 低"},
+  {k:"kcal",    label:"按热量低 → 高"},
+  {k:"carb",    label:"按碳水低 → 高"},
+  {k:"fat",     label:"按脂肪低 → 高"},
+  {k:"sodium",  label:"按钠低 → 高"},
+  {k:"price",   label:"按价格低 → 高"}
+];
+var FILTERS = [
+  {k:"all",    label:"全部"},
+  {k:"single", label:"只看单品"},
+  {k:"combo",  label:"只看套餐"}
+];
+
+function el(tag, cls, text){
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function fmt(v, digits){
+  if (v === null || v === undefined || isNaN(v)) return "—";
+  return digits ? Number(v).toFixed(digits) : String(Math.round(Number(v)));
+}
+function esc(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+
+/* -------------------------------------------------------------------- state */
+var state = {
+  target: {kcal_max:null, protein_min:null, carb_max:null, fat_max:null, sodium_max:null},
+  enabled: {kcal_max:false, protein_min:false, carb_max:false, fat_max:false, sodium_max:false},
+  preset: null,
+  weight: null,
+  sort: "protein",
+  kind: "all",         // all | single | combo
+  swaps: {}            // code -> {roundIndex: choiceName}
+};
+
+function activeTarget(){
+  var t = {};
+  Object.keys(state.target).forEach(function(k){
+    if (state.enabled[k] && state.target[k] != null) t[k] = state.target[k];
+  });
+  return t;
+}
+
+/* ---------------------------------------------------------------- filtering */
+var FIELD_MAP = {
+  kcal_max:   {field:"kcal",   cmp:"<= ", label:"热量"},
+  protein_min:{field:"protein",cmp:">= ", label:"蛋白"},
+  carb_max:   {field:"carb",   cmp:"<= ", label:"碳水"},
+  fat_max:    {field:"fat",    cmp:"<= ", label:"脂肪"},
+  sodium_max: {field:"sodium", cmp:"<= ", label:"钠"}
+};
+
+/* Order matters: it is the order the rows appear in the panel. */
+var ALL_FIELDS = ["kcal_max","protein_min","carb_max","fat_max","sodium_max"];
+
+/* Offered when a user switches a row on by hand. */
+var DEFAULTS = {kcal_max:600, protein_min:25, carb_max:45, fat_max:20, sodium_max:800};
+
+function passes(item, target){
+  var keys = Object.keys(target);
+  if (!keys.length) return true;
+  for (var i=0;i<keys.length;i++){
+    var k = keys[i], m = FIELD_MAP[k];
+    if (!m) continue;
+    var n = item.nutrition;
+    if (!n || n[m.field] == null) return false;
+    if (m.cmp === "<= ") { if (!(n[m.field] <= target[k])) return false; }
+    else                 { if (!(n[m.field] >= target[k])) return false; }
+  }
+  return true;
+}
+
+function sortItems(list){
+  var s = state.sort;
+  var get = function(it){
+    if (!it.nutrition || it.nutrition[s] == null) return s === "price" ? 9e9 : 9e9;
+    return it.nutrition[s];
+  };
+  return list.slice().sort(function(a,b){
+    var ca = a.nutrition ? 0 : 1, cb = b.nutrition ? 0 : 1;
+    if (ca !== cb) return ca - cb;
+    // Single products first: a combo's totals are large simply because it is
+    // three items, which would otherwise push every single item off screen.
+    var ia = a.is_combo ? 1 : 0, ib = b.is_combo ? 1 : 0;
+    if (ia !== ib) return ia - ib;
+    if (s === "protein") return (b.nutrition.protein||0) - (a.nutrition.protein||0);
+    return get(a) - get(b);
+  });
+}
+
+/* ------------------------------------------------------------------ render */
+function renderPresets(){
+  var box = document.getElementById("presetChips");
+  box.innerHTML = "";
+  PRESETS.forEach(function(p){
+    var b = el("button","chip");
+    b.type = "button";
+    b.textContent = (p.emoji ? p.emoji + " " : "") + p.label;
+    b.setAttribute("aria-pressed", state.preset === p.key ? "true" : "false");
+    b.title = p.reason || "";
+    b.onclick = function(){
+      state.preset = (state.preset === p.key) ? null : p.key;
+      if (state.preset) applyPreset(p); else clearTargets();
+      renderPresets(); renderAll();
+    };
+    box.appendChild(b);
+  });
+}
+
+function applyPreset(p){
+  var t = p.target || {};
+  var w = state.weight;
+  // Every field gets a value: a preset is a complete goal profile, and a row
+  // left blank reads as an oversight rather than as a deliberate position.
+  ALL_FIELDS.forEach(function(k){
+    var v = t[k];
+    if (v != null && w && p.per_kg && p.per_kg[k] != null){
+      v = Math.round(p.per_kg[k] * w);
+    }
+    state.target[k] = (v == null) ? null : v;
+    // ...but only the preset's own filter keys are switched on. Applying all
+    // five returns an empty list on this menu -- see rule 3 in profiles.py.
+    state.enabled[k] = (v != null) && !!(p.filter && (k in p.filter));
+  });
+  syncTargetRows();
+  renderBasis(p);
+  var note = document.getElementById("reasonNote");
+  note.innerHTML = "";
+  note.appendChild(el("b", null, p.label + "："));
+  note.appendChild(document.createTextNode(p.reason || ""));
+  if (w && p.per_kg){
+    note.appendChild(document.createTextNode(" 数值已按体重 " + w + "kg 折算。"));
+  } else if (p.per_kg){
+    note.appendChild(document.createTextNode(" 填上体重可以折算成你自己的区间。"));
+  }
+  note.appendChild(el("b", null, " 参考值，不是营养处方。"));
+}
+
+/* The goal profile, with the basis behind every number. Rows marked with a red
+   dot are the ones actually filtering the list; the rest are targets to judge
+   the menu against, and can be switched on by hand. */
+function renderBasis(p){
+  var box = document.getElementById("basisBox");
+  box.innerHTML = "";
+  if (!p){ box.hidden = true; return; }
+  box.hidden = false;
+  var active = Object.keys(p.filter || {});
+  var rest = ALL_FIELDS.length - active.length;
+  box.appendChild(el("div","bh", p.label + " · 这五个数字是怎么来的"));
+  box.appendChild(el("div","bs",
+    "带红点的 " + active.length + " 项参与筛选" +
+    (rest > 0 ? "；其余 " + rest + " 项是对照目标，点开关就能加入筛选" : "")));
+  ALL_FIELDS.forEach(function(k){
+    var m = FIELD_MAP[k]; if (!m) return;
+    var row = el("div","bi" + (active.indexOf(k) >= 0 ? " act" : ""));
+    row.appendChild(el("b", null, m.label));
+    row.appendChild(document.createTextNode((p.basis && p.basis[k]) || ""));
+    box.appendChild(row);
+  });
+}
+
+function clearTargets(){
+  ALL_FIELDS.forEach(function(k){
+    state.enabled[k] = false; state.target[k] = null;
+  });
+  syncTargetRows();
+  renderBasis(null);
+  document.getElementById("reasonNote").innerHTML =
+    '参考值来自公开共识区间，<b>不是营养处方</b>。想自己定就打开上面的开关。';
+}
+
+function syncTargetRows(){
+  document.querySelectorAll(".trow").forEach(function(row){
+    var k = row.dataset.field;
+    var sw = row.querySelector(".sw");
+    var inp = row.querySelector("input");
+    sw.setAttribute("aria-checked", state.enabled[k] ? "true" : "false");
+    row.classList.toggle("on", state.enabled[k]);
+    inp.disabled = !state.enabled[k];
+    inp.value = state.target[k] == null ? "" : state.target[k];
+    // A preset fills all five rows but filters on a subset of them. The rest
+    // still show their number so the goal profile is complete -- they are just
+    // not applied, and the title says so.
+    var isRef = !state.enabled[k] && state.target[k] != null;
+    row.classList.toggle("ref", isRef);
+    inp.title = isRef ? "对照目标，未参与筛选（点开关即可加入）" : "";
+  });
+}
+
+function renderFilters(){
+  var box = document.getElementById("filterBar");
+  box.innerHTML = "";
+  FILTERS.forEach(function(f){
+    var b = el("button", null, f.label);
+    b.type = "button";
+    b.setAttribute("aria-pressed", state.kind === f.k ? "true" : "false");
+    b.onclick = function(){ state.kind = f.k; renderFilters(); renderList(); };
+    box.appendChild(b);
+  });
+}
+
+function renderSort(){
+  var box = document.getElementById("sortBar");
+  box.innerHTML = "";
+  SORTS.forEach(function(s){
+    var b = el("button", null, s.label);
+    b.type = "button";
+    b.setAttribute("aria-pressed", state.sort === s.k ? "true" : "false");
+    b.onclick = function(){ state.sort = s.k; renderSort(); renderList(); };
+    box.appendChild(b);
+  });
+}
+
+function thumbURL(item){
+  return item.image_local ? "docs/images/" + item.image_local : (item.image || "");
+}
+
+function cardNode(item){
+  var card = el("button","card");
+  card.type = "button";
+
+  var th = el("div","thumb");
+  var img = document.createElement("img");
+  img.loading = "lazy";
+  img.alt = item.name;
+  img.src = thumbURL(item);
+  // Local copy first (works offline / on GitHub Pages); if it is missing, fall
+  // back to the official CDN URL that came down with the menu, then give up.
+  img.onerror = function(){
+    if (!this.dataset.fallback && item.image && this.src !== item.image){
+      this.dataset.fallback = "1";
+      this.src = item.image;
+      return;
+    }
+    this.style.display = "none";
+  };
+  th.appendChild(img);
+  card.appendChild(th);
+
+  var body = el("div","card-body");
+  body.appendChild(el("div","card-name", item.name));
+
+  var meta = el("div","card-meta");
+  if (item.price != null){
+    var pr = el("div","price");
+    pr.appendChild(el("span","sym","¥"));
+    pr.appendChild(document.createTextNode(fmt(item.price,1)));
+    meta.appendChild(pr);
+  }
+  if (item.is_combo) meta.appendChild(el("span","tag combo","套餐算式"));
+  body.appendChild(meta);
+
+  var n = item.nutrition;
+  if (n){
+    var nums = el("div","card-nums");
+    [["kcal","kcal","kcal","热量"],
+     ["protein","pro","g","蛋白"],
+     ["carb","carb","g","碳水"],
+     ["fat","fat","g","脂肪"]].forEach(function(t){
+        var box = el("div","numbox " + t[1]);
+        var top = el("div","top");
+        top.appendChild(el("span","v num", fmt(n[t[0]])));
+        top.appendChild(el("span","u", t[2]));
+        box.appendChild(top);
+        box.appendChild(el("span","lb", t[3]));
+        nums.appendChild(box);
+      });
+    body.appendChild(nums);
+  } else {
+    body.appendChild(el("div","nodata","官方暂无这项的营养数据"));
+  }
+
+  var tags = el("div","tags");
+  (item.tags || []).forEach(function(t){
+    tags.appendChild(el("span","tag", t));
+  });
+  if (item.source === "combo-sum") tags.appendChild(el("span","tag gold","成分加总"));
+  if (item.match_level === 3 || item.match_level === 5) tags.appendChild(el("span","tag","规格推断"));
+  if (tags.children.length) body.appendChild(tags);
+
+  card.appendChild(body);
+  card.appendChild(el("div","chev","›"));
+  card.onclick = function(){ openSheet(item); };
+  return card;
+}
+
+function renderList(){
+  var target = activeTarget();
+  var listEl = document.getElementById("list");
+  listEl.innerHTML = "";
+
+  var pool = ITEMS.filter(function(it){
+    if (state.kind === "single") return !it.is_combo;
+    if (state.kind === "combo") return !!it.is_combo;
+    return true;
+  });
+  var passed = pool.filter(function(it){ return passes(it, target); });
+  var withData = passed.filter(function(it){ return it.nutrition; });
+  var matched = sortItems(withData);
+
+  var filtering = target && Object.keys(target).length;
+  document.getElementById("matchCount").textContent = filtering
+        ? matched.length + " / " + pool.length
+        : String(pool.length);
+  document.getElementById("matchLabel").textContent = filtering
+        ? "项符合条件" : "项在售（未筛）";
+
+  if (!matched.length){
+    var e = el("div","empty");
+    e.appendChild(el("div","em","🤔"));
+    e.appendChild(el("h3", null, "这个组合有点为难"));
+    e.appendChild(el("p", null, "没有餐品同时满足全部条件。放宽一个上限试试，或者换个预设、把「只看单品/套餐」切回全部。"));
+    listEl.appendChild(e);
+    return;
+  }
+
+  matched.forEach(function(it){
+    listEl.appendChild(cardNode(it));
+  });
+
+  if (passed.length > matched.length){
+    var gap = el("p","note", "另有 " + (passed.length - matched.length) +
+      " 项符合条件但官方暂无营养数据，未列出——不是漏掉，是拿不到就不编。");
+    listEl.appendChild(gap);
+  }
+}
+
+function renderAll(){ renderList(); }
+
+/* ------------------------------------------------------------------- sheet */
+var mask = document.getElementById("mask");
+var sheet = document.getElementById("sheet");
+
+function closeSheet(){
+  sheet.classList.remove("on");
+  mask.classList.remove("on");
+}
+mask.onclick = closeSheet;
+document.addEventListener("keydown", function(e){ if (e.key === "Escape") closeSheet(); });
+
+function openSheet(item){
+  var box = document.getElementById("sheetContent");
+  box.innerHTML = "";
+
+  var head = el("div","sheet-head");
+  var img = document.createElement("img");
+  img.src = thumbURL(item); img.alt = item.name;
+  img.onerror = function(){ this.style.visibility = "hidden"; };
+  head.appendChild(img);
+
+  var info = el("div");
+  var h3 = el("h3", null, item.name); h3.id = "sheetTitle";
+  info.appendChild(h3);
+  var sm = el("div","smeta", "餐品编码 " + item.code);
+  info.appendChild(sm);
+  if (item.price != null){
+    var sp = el("div","sprice");
+    sp.appendChild(document.createTextNode("¥" + fmt(item.price,1)));
+    info.appendChild(sp);
+  }
+  info.appendChild(buildTags(item));
+  head.appendChild(info);
+  box.appendChild(head);
+
+  if (item.nutrition){
+    box.appendChild(blockNutrition(item));
+  } else {
+    var w = el("div","warn");
+    w.appendChild(el("b", null, "官方暂无这项数据。"));
+    w.appendChild(document.createTextNode(" 我们不会用估算值填这个空——拿不到就是拿不到。"));
+    box.appendChild(w);
+  }
+
+  if (item.rounds && item.rounds.length >= 2) box.appendChild(blockCombo(item));
+  if (item.removable && item.removable.length) box.appendChild(blockRemovable(item));
+  box.appendChild(blockSource(item));
+
+  sheet.classList.add("on");
+  mask.classList.add("on");
+  sheet.scrollTop = 0;
+}
+
+function buildTags(item){
+  var tags = el("div","tags");
+  (item.tags || []).forEach(function(t){ tags.appendChild(el("span","tag", t)); });
+  if (item.source === "combo-sum") tags.appendChild(el("span","tag gold","成分加总"));
+  if (item.match_level === 3 || item.match_level === 5) tags.appendChild(el("span","tag","规格推断"));
+  return tags;
+}
+
+function blockNutrition(item){
+  var b = el("div","block");
+  b.appendChild(el("h4", null, "完整营养 · 每份"));
+  var g = el("div","grid6");
+  var n = item.nutrition;
+  [["能量", n.kcal, "kcal", true], ["蛋白质", n.protein, "g", false], ["脂肪", n.fat, "g", false],
+   ["碳水化合物", n.carb, "g", false], ["钠", n.sodium, "mg", false], ["钙", n.calcium, "mg", false]]
+  .forEach(function(c){
+    var cell = el("div","cell" + (c[3] ? " hero" : ""));
+    cell.appendChild(el("div","k", c[0]));
+    var v = el("div","v num", fmt(c[1]));
+    if (c[1] != null) v.appendChild(el("em", null, c[2]));
+    cell.appendChild(v);
+    g.appendChild(cell);
+  });
+  b.appendChild(g);
+  return b;
+}
+
+function comboTotal(item, sel){
+  var out = {kcal:0, price:item.price || 0, unknown:0, parts:[]};
+  (item.rounds || []).forEach(function(r, ri){
+    var chosen = sel[ri] || r.default;
+    var pick = null;
+    for (var i=0;i<r.choices.length;i++){ if (r.choices[i].name === chosen){ pick = r.choices[i]; break; } }
+    if (!pick) pick = r.choices[0] || {};
+    if (pick.kcal == null) out.unknown++; else out.kcal += pick.kcal;
+    out.price += (pick.price || 0);
+    out.parts.push({round:r, ri:ri, chosen:pick.name, pick:pick});
+  });
+  return out;
+}
+
+function blockCombo(item){
+  var b = el("div","block");
+  b.appendChild(el("h4", null, "这单是怎么算出来的"));
+
+  var sel = state.swaps[item.code] || {};
+  var tot = comboTotal(item, sel);
+  var base = item.nutrition ? item.nutrition.kcal : null;
+  var delta = (base != null && tot.unknown === 0) ? (tot.kcal - base) : null;
+
+  var sum = el("div","srow");
+  sum.style.background = "var(--container)";
+  sum.style.borderColor = "var(--gold)";
+  sum.style.padding = "12px";
+  var lft = el("div");
+  lft.style.flex = "1 1 auto";
+  lft.appendChild(el("div","sname","这单合计"));
+  if (delta !== null && delta !== 0){
+    var d = el("div", null, (delta > 0 ? "比默认搭配多 " : "比默认搭配少 ") + fmt(Math.abs(delta)) + " kcal");
+    d.style.cssText = "font-size:11px;font-weight:600;margin-top:2px;color:" + (delta > 0 ? "var(--ruby-soft)" : "var(--ok)");
+    lft.appendChild(d);
+  } else if (total0Hint(tot)) {
+    var h = el("div", null, "含 " + tot.unknown + " 项暂无官方数据，合计为已知部分之和");
+    h.style.cssText = "font-size:11px;font-weight:600;margin-top:2px;color:var(--ink-3)";
+    lft.appendChild(h);
+  }
+  sum.appendChild(lft);
+  var rgt = el("div");
+  rgt.style.cssText = "text-align:right;flex:0 0 auto;padding-left:10px";
+  rgt.appendChild(el("div","num", fmt(tot.kcal) + " kcal"));
+  rgt.lastChild.style.cssText = "font-size:19px;font-weight:700;letter-spacing:-.7px;line-height:1.1";
+  rgt.appendChild(el("div","num", "¥" + fmt(tot.price,1)));
+  rgt.lastChild.style.cssText = "font-size:13px;font-weight:700;color:var(--ruby);margin-top:2px";
+  sum.appendChild(rgt);
+  b.appendChild(sum);
+
+  var box = el("div");
+  box.style.marginTop = "12px";
+  tot.parts.forEach(function(part){
+    var round = part.round;
+    var row = el("div","srow");
+    row.appendChild(el("span","sname", round.label));
+    row.appendChild(el("span","sdelta flat num",
+      part.pick.kcal != null ? fmt(part.pick.kcal) + " kcal" : "暂无数据"));
+    box.appendChild(row);
+
+    if (round.choices.length > 1){
+      var swaps = el("div","swaps");
+      swaps.style.margin = "0 0 14px";
+      round.choices.slice(0, 10).forEach(function(c){
+        var btn = el("button","swap");
+        btn.type = "button";
+        var label = c.name;
+        if (c.kcal != null) label += "  " + fmt(c.kcal);
+        if (c.price) label += "  " + (c.price > 0 ? "+" : "−") + "¥" + fmt(Math.abs(c.price),1);
+        btn.textContent = label;
+        btn.setAttribute("aria-pressed", c.name === part.chosen ? "true" : "false");
+        btn.onclick = function(){
+          state.swaps[item.code] = state.swaps[item.code] || {};
+          state.swaps[item.code][part.ri] = c.name;
+          openSheet(item);
+        };
+        swaps.appendChild(btn);
+      });
+      box.appendChild(swaps);
+    }
+  });
+  b.appendChild(box);
+
+  var note = el("div","note");
+  note.style.marginTop = "4px";
+  note.textContent = "换小食、换饮料，热量和差价会跟着重算 —— 这些选项和差价都来自官方接口，不是我们自己排的。";
+  b.appendChild(note);
+  return b;
+}
+
+function total0Hint(tot){ return tot.unknown > 0; }
+
+function blockRemovable(item){
+  var b = el("div","block");
+  b.appendChild(el("h4", null, "可以去掉的配料"));
+  var list = el("div","swaps");
+  item.removable.forEach(function(name){
+    list.appendChild(el("span","swap", name));
+  });
+  b.appendChild(list);
+  var w = el("div","warn");
+  w.appendChild(el("b", null, "官方只告诉你「去掉了什么」，不返回「去掉后少多少千卡」。"));
+  w.appendChild(document.createTextNode(" 所以我们只列清单，不算差值——那个数字没有官方来源，我们不会编。"));
+  b.appendChild(w);
+  return b;
+}
+
+/* One line, as asked. The provenance caveat is not lost by shortening this --
+   it lives in the "规格推断" tag beside the title, where the reader meets it
+   before the numbers rather than after them. */
+function blockSource(item){
+  var b = el("div","block");
+  var bar = el("div","srcbar");
+  bar.innerHTML = "<b>数据来源</b>：麦当劳官方接口";
+  b.appendChild(bar);
+  return b;
+}
+
+/* -------------------------------------------------------------------- store
+   实时门店。页面本身是静态的，而麦当劳接口没有任何 CORS 头，所以"选店"这一步
+   必须经过 server.py 转发。Token 只进本机 localStorage，也只发给我们自己的
+   后端，不写进页面、不进 URL。
+------------------------------------------------------------------------- */
+var TOKEN_KEY = "mcd_token", PLACE_KEY = "mcd_place";
+var LIVE = { ready:false, busy:false, store:null };
+
+function lsGet(k){
+  try { return localStorage.getItem(k) || ""; } catch(e){ return ""; }
+}
+function lsSet(k, v){
+  try { localStorage.setItem(k, v); } catch(e){ /* 隐私模式：静默降级 */ }
+}
+function tokenValue(){ return lsGet(TOKEN_KEY).trim(); }
+
+function storeMsg(text, kind){
+  var box = document.getElementById("storeMsg");
+  box.textContent = text || "";
+  box.className = "smsg" + (kind ? " " + kind : "");
+}
+
+function apiPost(path, body){
+  return fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-MCD-Token": tokenValue() },
+    body: JSON.stringify(body || {})
+  }).then(function(res){
+    return res.json().catch(function(){
+      return { ok:false, error:"服务返回了非预期的内容（HTTP " + res.status + "）" };
+    });
+  });
+}
+
+function renderStores(stores){
+  var box = document.getElementById("storeList");
+  box.innerHTML = "";
+  if (!stores.length){
+    storeMsg("这个位置没查到门店。换个地标或换个区再试。", "err");
+    return;
+  }
+  storeMsg("查到 " + stores.length + " 家。点一家，换成它此刻的实时菜单。", "ok");
+
+  stores.forEach(function(s){
+    var b = el("button", "sitem");
+    b.type = "button";
+
+    var left = el("div");
+    left.appendChild(el("div", "sname", s.storeName || s.storeCode));
+    if (s.address) left.appendChild(el("div", "saddr", s.address));
+    b.appendChild(left);
+
+    var right = el("div", "sright");
+    if (s.distance){
+      right.appendChild(el("div", "sdist",
+        s.distance < 1000 ? s.distance + "m" : (s.distance / 1000).toFixed(1) + "km"));
+    }
+    right.appendChild(el("div", "sopen" + (s.open ? "" : " shut"), s.open ? "营业中" : "已打烊"));
+    b.appendChild(right);
+
+    b.onclick = function(){ loadStore(s); };
+    box.appendChild(b);
+  });
+}
+
+function applyLiveData(d, store){
+  ITEMS = d.items || [];
+  STORE = d.store || {};
+  META  = d.meta || {};
+  D.items = ITEMS;
+  LIVE.store = store || STORE;
+  refreshHeader();
+  renderAll();
+}
+
+function loadStore(s){
+  if (LIVE.busy) return;
+  LIVE.busy = true;
+  var btn = document.getElementById("findBtn");
+  btn.disabled = true;
+  storeMsg("正在读「" + (s.storeName || s.storeCode) + "」的实时菜单…要逐项拉详情，约 3–5 秒。");
+
+  apiPost("/api/store-menu", { storeCode: s.storeCode })
+    .then(function(d){
+      if (!d || !d.ok){ storeMsg((d && d.error) || "读取失败。", "err"); return; }
+      applyLiveData(d, s);
+      storeMsg(
+        "已切到「" + (STORE.storeName || s.storeCode) + "」：在售 " + META.item_count +
+        " 项，其中 " + META.with_nutrition + " 项有官方营养数据" +
+        (d.elapsed_ms ? "（耗时 " + (d.elapsed_ms / 1000).toFixed(1) + "s）" : "") + "。",
+        "ok"
+      );
+      var head = document.querySelector(".resulthead");
+      if (head && head.scrollIntoView) head.scrollIntoView({ behavior:"smooth", block:"start" });
+    })
+    .catch(function(e){
+      storeMsg("读取失败：" + (e && e.message ? e.message : e), "err");
+    })
+    .then(function(){
+      LIVE.busy = false;
+      btn.disabled = false;
+    });
+}
+
+function findStores(){
+  if (LIVE.busy) return;
+  var token = tokenValue();
+  if (!token){
+    storeMsg("先填 MCP Token（在 open.mcd.cn/mcp 申请）。它只存在你这台设备上。", "err");
+    document.getElementById("tokenInput").focus();
+    return;
+  }
+  var city = document.getElementById("cityInput").value.trim();
+  var keyword = document.getElementById("kwInput").value.trim();
+  if (!city && !keyword){ storeMsg("至少填一个城市或位置。", "err"); return; }
+  lsSet(PLACE_KEY, city + "\u0000" + keyword);
+
+  var btn = document.getElementById("findBtn");
+  btn.disabled = true;
+  storeMsg("正在查门店…");
+
+  apiPost("/api/stores", { city: city, keyword: keyword })
+    .then(function(d){
+      if (!d || !d.ok){ storeMsg((d && d.error) || "查询失败。", "err"); return; }
+      renderStores(d.stores || []);
+    })
+    .catch(function(e){
+      storeMsg("查询失败：" + (e && e.message ? e.message : e), "err");
+    })
+    .then(function(){ btn.disabled = false; });
+}
+
+function initStore(){
+  var cityIn = document.getElementById("cityInput");
+  var kwIn = document.getElementById("kwInput");
+  var tokenIn = document.getElementById("tokenInput");
+
+  var saved = lsGet(PLACE_KEY).split("\u0000");
+  if (saved[0]) cityIn.value = saved[0];
+  if (saved[1]) kwIn.value = saved[1];
+  if (tokenValue()) tokenIn.value = tokenValue();
+
+  tokenIn.onchange = function(){ lsSet(TOKEN_KEY, tokenIn.value.trim()); };
+  document.getElementById("tokenToggle").onclick = function(){
+    var showing = tokenIn.type === "text";
+    tokenIn.type = showing ? "password" : "text";
+    this.textContent = showing ? "显示" : "隐藏";
+  };
+  document.getElementById("findBtn").onclick = findStores;
+  [cityIn, kwIn].forEach(function(inp){
+    inp.onkeydown = function(ev){
+      if (ev.key === "Enter"){ ev.preventDefault(); findStores(); }
+    };
+  });
+
+  // The form only appears when there is actually a backend to talk to.
+  fetch("/api/ping", { cache: "no-store" })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || !d.ok) throw new Error("no backend");
+      LIVE.ready = true;
+      document.getElementById("storeForm").hidden = false;
+      document.getElementById("storeOff").hidden = true;
+      storeMsg("填 Token 后点查询。城市 + 地标即可，接口不收 GPS 坐标。");
+    })
+    .catch(function(){
+      document.getElementById("storeForm").hidden = true;
+      document.getElementById("storeOff").hidden = false;
+      document.getElementById("storeTag").textContent = "快照";
+      document.getElementById("storeText").textContent =
+        "现在用的是快照数据。选一家门店，就能换成它此刻真正在售的菜单 —— 每家店今天有什么，并不完全一样。";
+    });
+}
+
+function refreshHeader(){
+  var live = !!META.live;
+  var storeName = STORE.storeName || (META.store && META.store.storeName) || "示例门店";
+  document.getElementById("storeLine").textContent =
+    storeName + (live ? " · 实时菜单" : " · 菜单快照");
+
+  var when = (META.captured_at || "").replace("T", " ").slice(0, 16);
+  document.getElementById("snapshotLine").textContent = live
+    ? "实时读取于 " + when.slice(11) + " · 共 " + ITEMS.length + " 项在售"
+    : "接口快照 " + when + " · 共 " + ITEMS.length + " 项在售";
+
+  document.getElementById("modePill").textContent = live ? "实时数据" : "演示数据";
+  document.getElementById("storeTag").textContent = live ? "实时" : "快照";
+  document.getElementById("storeTag").className = "storetag" + (live ? " live" : "");
+  document.getElementById("storeText").textContent = live
+    ? "正在显示「" + storeName + "」此刻在售的菜单。换一家店，或改城市和地标重新查。"
+    : "现在用的是快照数据。选一家门店，就能换成它此刻真正在售的菜单 —— 每家店今天有什么，并不完全一样。";
+}
+
+/* -------------------------------------------------------------------- init */
+function initTargetRows(){
+  document.querySelectorAll(".trow").forEach(function(row){
+    var k = row.dataset.field;
+    var sw = row.querySelector(".sw");
+    var inp = row.querySelector("input");
+    sw.onclick = function(){
+      state.enabled[k] = !state.enabled[k];
+      if (state.enabled[k] && (state.target[k] == null)) state.target[k] = DEFAULTS[k] || 600;
+      state.preset = null; renderPresets(); syncTargetRows(); renderAll();
+    };
+    inp.oninput = function(){
+      var v = parseFloat(inp.value);
+      state.target[k] = isNaN(v) ? null : v;
+      state.preset = null; renderPresets(); renderAll();
+    };
+  });
+  document.getElementById("weightInput").oninput = function(){
+    var v = parseFloat(this.value);
+    state.weight = isNaN(v) ? null : v;
+    if (state.preset){
+      var p = PRESETS.filter(function(x){ return x.key === state.preset; })[0];
+      if (p) applyPreset(p);
+    }
+    renderAll();
+  };
+}
+
+refreshHeader();
+initTargetRows();
+initStore();
+renderPresets();
+renderFilters();
+renderSort();
+renderAll();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcd-order-copilot"
+version = "0.1.0"
+description = "点单参谋：麦当劳点单前的营养速查。数字全部来自麦当劳 MCP 官方接口，仓库内零硬编码。"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["mcdonalds", "mcp", "nutrition", "cli", "menu"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Utilities",
+]
+# 零依赖：只用 Python 标准库。这不只是洁癖 —— 评委 clone 下来必须能直接跑。
+dependencies = []
+
+[project.optional-dependencies]
+# 仅用于脚本（快照同步 / 演示页构建），运行 CLI 不需要。
+scripts = []
+
+[project.scripts]
+mcd-order-copilot = "mcd_order_copilot.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mcd_order_copilot = ["py.typed"]

@@ -1,0 +1,24 @@
+{
+ "source": "https://mcp.mcd.cn (mcd-mcp v1.0.0)",
+ "captured_at": "2026-10-15T15:17:26+08:00",
+ "captured_by": "scripts/sync_fixtures.py",
+ "store": {
+  "storeCode": "1400886",
+  "storeName": "麦当劳广州芳村立白中心餐厅"
+ },
+ "counts": {
+  "tools": 35,
+  "nutrition": 160,
+  "menu": 115,
+  "categories": 15,
+  "meal_details": 115
+ },
+ "read_only": true,
+ "tools_called": [
+  "list-nutrition-foods",
+  "query-meal-detail",
+  "query-meals",
+  "query-nearby-stores"
+ ],
+ "note": "Real responses captured from the official MCP endpoint so the demo runs without a token. No nutrition value is hard-coded or estimated."
+}

@@ -1,0 +1,47 @@
+# ------------------------------------------------------------------ Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+.venv/
+venv/
+env/
+
+# 测试与类型检查缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ------------------------------------------------- 本地私有配置（严禁入库）
+# 真实 Token 只走环境变量 MCD_MCP_TOKEN。
+# 下面这些是"以防手滑把本地文件拖进 git"的兜底，不是加密手段。
+mcp-config.local.json
+*local*.json
+!.workbuddy/
+.env
+.env.*
+*.token
+*token*.txt
+
+# --------------------------------------- 构建 / 校验脚本的临时产物（不入库）
+_tmp/
+docs/_tmp/
+*.log
+# 根目录下以 _ 开头的临时文件（本地调试落盘用的），注意锚定在根层，
+# 不能写成 `_*.json` —— 那会连 fixtures/_meta.json 一起误伤。
+/_*.json
+/_*.txt
+/_*.b64
+
+# ------------------------------------------------------ 编辑器 / 操作系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

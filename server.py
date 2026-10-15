@@ -16,13 +16,37 @@ So the browser talks to this process, and this process talks to McDonald's.
 
 Token handling
 --------------
-The token arrives on every request in the ``X-MCD-Token`` header. It is held in
-memory for the lifetime of that request, is never written to disk, and is never
-logged. The page keeps the user's own token in its own ``localStorage``.
+Two ways in, and the difference between them matters.
 
-The server deliberately does **not** read ``MCD_MCP_TOKEN`` from the
-environment unless you pass ``--allow-env-token``. A public deployment must not
-carry a shared credential that anonymous visitors could spend.
+**The visitor's own token** arrives on every request in the ``X-MCD-Token``
+header. It is held in memory for the lifetime of that request, is never written
+to disk, and is never logged. The page keeps it in its own ``localStorage``.
+
+**A shared demo token** may be supplied once at start-up -- via ``--shared-token``,
+via the ``MCD_MCP_TOKEN`` environment variable, or via a ``.mcd-token`` file
+sitting next to this script -- so a visitor can try live mode without owning a
+token. This matters because the public API issues tokens only to registered
+developers, which is to say almost none of the people you would send a demo link
+to can get one. When configured, the shared token is spent on general endpoints
+only:
+
+======================  ==================================================
+``GET  /api/ping``      reports whether a shared token is available
+``POST /api/stores``    city + landmark -> nearby restaurants
+``POST /api/store-menu`` one store's live menu
+``POST /api/geo-stores`` coordinates -> place words -> nearby restaurants
+``POST /api/stores-by-place``  a place -> nearby restaurants
+======================  ==================================================
+
+``POST /api/addresses`` is **excluded on purpose**. It reads the *caller's own*
+saved delivery addresses, so accepting a shared token there would hand every
+anonymous visitor the owner's home address. It always requires a token supplied
+by the caller.
+
+Anonymous traffic on the shared token is rate limited (see the ``RATE_*``
+constants): the documented ceiling is 600 requests per minute for a whole token,
+and building one store menu costs about 115 of them. Visitors who bring their own
+token are never limited by this server.
 
 Only read-only tools are called: ``query-nearby-stores``, ``query-meals``,
 ``query-meal-detail``, ``list-nutrition-foods`` and ``delivery-query-addresses``
@@ -58,6 +82,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -87,17 +112,135 @@ MAX_PARALLEL_BUILDS = int(os.environ.get("MCD_MAX_PARALLEL", "4"))
 #: licensed and public, so it stays reachable -- what must not leak is a local
 #: config that could carry a real token.
 DENY_PREFIXES = (".git", ".workbuddy", "node_modules", "__pycache__", ".venv")
-DENY_NAMES = {"my-mcp-config.local.json"}
+
+#: Extensions never served over HTTP. The source is public on GitHub anyway, but
+#: a demo site should serve a page, not hand out its own backend -- and a
+#: deployment directory always ends up next to whatever else was lying around.
+DENY_EXTS = {".py", ".pyc", ".pyo", ".pyd", ".md", ".toml", ".cfg", ".ini", ".log", ".bak"}
+
+DENY_NAMES = {
+    "my-mcp-config.local.json",
+    ".mcd-token",
+    "mcd-token",
+    "mcd-token.txt",
+    "shared-token.txt",
+    "token.txt",
+}
 
 #: Text assets worth compressing. The demo page is a single 300 KB+ HTML file,
 #: so this is the difference between a pleasant and a painful first load.
 GZIP_EXTS = {".html", ".htm", ".css", ".js", ".json", ".svg", ".txt", ".md"}
 
-#: Empty unless ``--allow-env-token`` was passed. See the module docstring.
-ENV_TOKEN_FALLBACK = ""
+#: Where a deployment may drop the shared demo token. Read at start-up, held in
+#: memory, never echoed to a client and never written to a log. Several names are
+#: tried because some upload paths quietly drop dot-files.
+SHARED_TOKEN_FILES = (".mcd-token", "mcd-token.txt", "shared-token.txt")
+
+#: Empty means "every visitor brings their own token". See the module docstring.
+SHARED_TOKEN = ""
+
+# ---- shared-token budget ----------------------------------------------------
+#: The documented ceiling is 600 requests/minute for a whole token, and a single
+#: store menu costs ~115 calls, so an unbounded shared token would be drained by
+#: a handful of concurrent visitors. These caps keep the demo usable for
+#: everyone instead of fast for the first five. Same-store menus are cached for
+#: CACHE_TTL seconds and shared across visitors, which is what makes a small
+#: per-visitor budget go a long way.
+RATE_PER_MIN = int(os.environ.get("MCD_RATE_PER_MIN", "10"))
+RATE_PER_DAY = int(os.environ.get("MCD_RATE_PER_DAY", "60"))
+RATE_GLOBAL_PER_MIN = int(os.environ.get("MCD_RATE_GLOBAL_PER_MIN", "200"))
 
 
 # --------------------------------------------------------------------- helpers
+
+
+def _client_ip(handler: "Handler") -> str:
+    """Best-effort caller identity, for metering the shared demo budget.
+
+    The deployment sits behind a reverse proxy, so ``client_address`` is the
+    proxy rather than the visitor; ``X-Forwarded-For`` carries the real caller.
+    Both are attacker-controlled in the general case, which is acceptable here --
+    this only has to stop casual over-use of a demo quota, not a determined
+    attacker, and nothing of value is unlocked by faking it.
+    """
+    forwarded = handler.headers.get("X-Forwarded-For") or ""
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first[:64]
+    if handler.client_address:
+        return str(handler.client_address[0])[:64]
+    return "unknown"
+
+
+class _RateLimiter:
+    """Sliding-window counters for the shared token, in memory only.
+
+    Two windows per caller plus one global window. A plain dict behind a lock is
+    the whole implementation -- this is a demo proxy running as a single
+    process, not a load balancer. Set a cap to 0 to disable that window.
+    """
+
+    def __init__(self, per_minute: int, per_day: int, global_per_minute: int) -> None:
+        self.per_minute = per_minute
+        self.per_day = per_day
+        self.global_per_minute = global_per_minute
+        self._lock = threading.Lock()
+        self._minute: dict[str, list[float]] = {}
+        self._day: dict[str, list[float]] = {}
+        self._global: list[float] = []
+
+    @staticmethod
+    def _trim(stamps: list[float], window: float, now: float) -> None:
+        """Drop stamps older than the window. Appends are ordered, so the
+        expired ones are always a prefix -- no need to walk the whole list."""
+        cut = now - window
+        drop = 0
+        for stamp in stamps:
+            if stamp >= cut:
+                break
+            drop += 1
+        if drop:
+            del stamps[:drop]
+
+    def check(self, key: str) -> str:
+        """Record one use. Return "" when allowed, else a message for the visitor."""
+        now = time.time()
+        with self._lock:
+            self._trim(self._global, 60.0, now)
+            if self.global_per_minute and len(self._global) >= self.global_per_minute:
+                return ("这会儿体验的人有点多，演示额度每分钟有上限。"
+                        "等一分钟再点，或者填上你自己的 MCP Token。")
+
+            minute = self._minute.setdefault(key, [])
+            self._trim(minute, 60.0, now)
+            if self.per_minute and len(minute) >= self.per_minute:
+                return f"点得有点快（每分钟上限 {self.per_minute} 次），歇一分钟再来。"
+
+            day = self._day.setdefault(key, [])
+            self._trim(day, 86400.0, now)
+            if self.per_day and len(day) >= self.per_day:
+                return (f"今天的演示额度用完了（每天上限 {self.per_day} 次），明天恢复。"
+                        "现在想接着用，可以填上你自己的 MCP Token。")
+
+            minute.append(now)
+            day.append(now)
+            self._global.append(now)
+            self._sweep(now)
+        return ""
+
+    def _sweep(self, now: float) -> None:
+        """Forget callers who have gone quiet, so the dicts cannot grow forever.
+        Called with the lock held."""
+        if len(self._minute) < 500:
+            return
+        for store, window in ((self._minute, 60.0), (self._day, 86400.0)):
+            stale = [key for key, stamps in store.items() if not stamps or now - stamps[-1] > window]
+            for key in stale:
+                del store[key]
+
+
+RATE_LIMITER = _RateLimiter(RATE_PER_MIN, RATE_PER_DAY, RATE_GLOBAL_PER_MIN)
 
 
 def _fingerprint(token: str) -> str:
@@ -547,13 +690,42 @@ class Handler(SimpleHTTPRequestHandler):
     def _token(self) -> str:
         return (self.headers.get("X-MCD-Token") or "").strip()
 
+    def _resolve_token(self) -> tuple[str, str, int]:
+        """Pick the token for a *general* endpoint.
+
+        Returns ``(token, "", 200)`` on success or ``("", message, status)`` when
+        the caller has neither their own token nor a shared one to fall back on
+        (401), or has used up their share of the shared demo budget (429). A
+        visitor who supplies their own token is never metered -- we are only
+        rationing the owner's quota.
+        """
+        own = self._token()
+        if own:
+            return own, "", 200
+        if not SHARED_TOKEN:
+            return "", "缺少 Token。请在页面里填入你自己的 MCP Token。", 401
+        reason = RATE_LIMITER.check(_client_ip(self))
+        if reason:
+            return "", reason, 429
+        return SHARED_TOKEN, "", 200
+
+    def _require_own_token(self) -> str:
+        """A token supplied by the caller, for endpoints that must not borrow
+        the shared one -- anything that reads *their* account rather than
+        public menu data."""
+        return self._token()
+
     # ---------------------------------------------------------- static guard
 
     def translate_path(self, path):
         resolved = super().translate_path(path)
         rel = os.path.relpath(resolved, ROOT).replace("\\", "/")
         head = rel.split("/", 1)[0]
-        if head in DENY_PREFIXES or os.path.basename(rel) in DENY_NAMES:
+        if (
+            head in DENY_PREFIXES
+            or os.path.basename(rel) in DENY_NAMES
+            or os.path.splitext(rel)[1].lower() in DENY_EXTS
+        ):
             return os.path.join(ROOT, "__denied__")
         return resolved
 
@@ -620,6 +792,9 @@ class Handler(SimpleHTTPRequestHandler):
                     "ok": True,
                     "service": "mcd-order-copilot",
                     "live": True,
+                    # The page uses this to decide whether to ask for a token at
+                    # all: with a shared one configured, a visitor can just click.
+                    "shared_token": bool(SHARED_TOKEN),
                     "detail_workers": DETAIL_WORKERS,
                     "cache_ttl": CACHE_TTL,
                 },
@@ -653,9 +828,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _handle_stores(self) -> None:
         body = self._read_json()
-        token = self._token() or ENV_TOKEN_FALLBACK
+        token, why, status = self._resolve_token()
         if not token:
-            self._json(401, {"ok": False, "error": "缺少 Token。请在页面里填入你的 MCP Token。"})
+            self._json(status, {"ok": False, "error": why})
             return
         city = str(body.get("city") or "").strip()
         keyword = str(body.get("keyword") or "").strip()
@@ -675,9 +850,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _handle_store_menu(self) -> None:
         body = self._read_json()
-        token = self._token() or ENV_TOKEN_FALLBACK
+        token, why, status = self._resolve_token()
         if not token:
-            self._json(401, {"ok": False, "error": "缺少 Token。"})
+            self._json(status, {"ok": False, "error": why})
             return
         store_code = str(body.get("storeCode") or "").strip()
         if not store_code:
@@ -707,9 +882,9 @@ class Handler(SimpleHTTPRequestHandler):
         name here and discarded, so no location is stored on either side.
         """
         body = self._read_json()
-        token = self._token() or ENV_TOKEN_FALLBACK
+        token, why, status = self._resolve_token()
         if not token:
-            self._json(401, {"ok": False, "error": "缺少 Token。请在页面里填入你的 MCP Token。"})
+            self._json(status, {"ok": False, "error": why})
             return
         try:
             lat = float(body.get("lat"))
@@ -765,9 +940,9 @@ class Handler(SimpleHTTPRequestHandler):
     def _handle_stores_by_place(self) -> None:
         """Same as above, but the place words come from a saved address."""
         body = self._read_json()
-        token = self._token() or ENV_TOKEN_FALLBACK
+        token, why, status = self._resolve_token()
         if not token:
-            self._json(401, {"ok": False, "error": "缺少 Token。"})
+            self._json(status, {"ok": False, "error": why})
             return
         place = {
             "city": str(body.get("city") or "").strip(),
@@ -804,10 +979,23 @@ class Handler(SimpleHTTPRequestHandler):
         )
 
     def _handle_addresses(self) -> None:
-        """The account's saved McDonald's delivery addresses (read-only)."""
-        token = self._token() or ENV_TOKEN_FALLBACK
+        """The *caller's own* saved delivery addresses (read-only).
+
+        Deliberately does **not** fall back to the shared demo token. This reads
+        a private address book, so borrowing the shared credential here would
+        show the deployment owner's home address to every anonymous visitor.
+        """
+        token = self._require_own_token()
         if not token:
-            self._json(401, {"ok": False, "error": "缺少 Token。"})
+            self._json(
+                403,
+                {
+                    "ok": False,
+                    "error": "「我存的地址」读的是你自己麦当劳账号里的地址，"
+                             "所以需要填你自己的 MCP Token —— 演示额度不能借到这里。",
+                    "needOwnToken": True,
+                },
+            )
             return
         try:
             addresses = fetch_saved_addresses(token)
@@ -832,20 +1020,60 @@ def _lan_ip() -> str:
         return "127.0.0.1"
 
 
+def _load_shared_token(explicit: str, explicit_file: str) -> tuple[str, str]:
+    """Resolve the shared demo token. Returns ``(token, where_it_came_from)``.
+
+    Three sources, most explicit first. The file is last for a reason: the
+    publishing sandbox injects only ``PORT``, so a deployment that cannot set
+    environment variables still needs a way in -- dropping ``.mcd-token`` next to
+    this script is it.
+    """
+    if explicit.strip():
+        return explicit.strip(), "--shared-token"
+    env = os.environ.get("MCD_MCP_TOKEN", "").strip()
+    if env:
+        return env, "MCD_MCP_TOKEN 环境变量"
+    candidates: list[Path] = []
+    if explicit_file.strip():
+        candidates.append(Path(explicit_file.strip()))
+    here = Path(__file__).resolve().parent
+    candidates.extend(here / name for name in SHARED_TOKEN_FILES)
+    for path in candidates:
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if value:
+            return value, str(path)
+    return "", ""
+
+
 def main() -> int:
-    global ENV_TOKEN_FALLBACK
+    global SHARED_TOKEN
     parser = argparse.ArgumentParser(description="点单参谋 · 实时门店后端")
     parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8777")))
     parser.add_argument(
-        "--allow-env-token",
+        "--shared-token",
+        default="",
+        help="开放给访客使用的演示 Token。不给则访客必须自带。",
+    )
+    parser.add_argument(
+        "--shared-token-file",
+        default="",
+        help="从文件读取演示 Token（默认还会依次找脚本同目录的 "
+             + " / ".join(SHARED_TOKEN_FILES) + "）。",
+    )
+    parser.add_argument(
+        "--no-shared-token",
         action="store_true",
-        help="本地调试用：允许回落到 MCD_MCP_TOKEN 环境变量。公开部署不要开。",
+        help="只用访客自带的 Token，禁用演示额度。",
     )
     args = parser.parse_args()
 
-    if args.allow_env_token:
-        ENV_TOKEN_FALLBACK = os.environ.get("MCD_MCP_TOKEN", "").strip()
+    source = ""
+    if not args.no_shared_token:
+        SHARED_TOKEN, source = _load_shared_token(args.shared_token, args.shared_token_file)
 
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     httpd.daemon_threads = True
@@ -853,6 +1081,13 @@ def main() -> int:
     print(f"  本机    http://127.0.0.1:{args.port}/")
     print(f"  局域网  http://{_lan_ip()}:{args.port}/")
     print(f"  详情并发 {DETAIL_WORKERS} · 缓存 {CACHE_TTL}s · 并行构建上限 {MAX_PARALLEL_BUILDS}")
+    if SHARED_TOKEN:
+        print(f"  演示额度 已启用（来源：{source}）")
+        print(f"          访客无需自带 Token · 每人 {RATE_PER_MIN}/分钟、{RATE_PER_DAY}/天"
+              f" · 全场 {RATE_GLOBAL_PER_MIN}/分钟")
+        print("          「我存的地址」不借演示额度 —— 它读的是调用者自己的账号。")
+    else:
+        print("  演示额度 未配置：访客必须自带 MCP Token")
     print("  Token 只随请求转发，不落盘、不写日志。Ctrl+C 停止。")
     try:
         httpd.serve_forever()

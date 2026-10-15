@@ -335,15 +335,19 @@ button{font-family:inherit; cursor:pointer; border:none; background:none; color:
 
     <div id="storeForm" hidden>
       <div class="srow2">
-        <input id="tokenInput" type="password" placeholder="MCP Token" autocomplete="off"
-               spellcheck="false" autocapitalize="off">
-        <button class="sbtn ghost" id="tokenToggle" type="button">显示</button>
-      </div>
-
-      <div class="srow2">
         <button class="sbtn wide" id="geoBtn" type="button">用我的位置</button>
         <button class="sbtn wide alt" id="addrBtn" type="button">我存的地址</button>
       </div>
+
+      <details class="smore" id="tokenBox">
+        <summary id="tokenSummary">用自己的 MCP Token（可选）</summary>
+        <div class="srow2">
+          <input id="tokenInput" type="password" placeholder="MCP Token" autocomplete="off"
+                 spellcheck="false" autocapitalize="off">
+          <button class="sbtn ghost" id="tokenToggle" type="button">显示</button>
+        </div>
+        <p class="smsg" id="tokenHint"></p>
+      </details>
 
       <details class="smore" id="manualBox">
         <summary>也可以手动填城市和地标</summary>
@@ -979,7 +983,9 @@ function blockSource(item){
    后端，不写进页面、不进 URL。
 ------------------------------------------------------------------------- */
 var TOKEN_KEY = "mcd_token", PLACE_KEY = "mcd_place";
-var LIVE = { ready:false, busy:false, store:null };
+/* shared: 后端配了演示额度，访客不带 Token 也能用实时门店。
+   这件事由 /api/ping 告诉页面，前端据此决定要不要摆一个 Token 输入框。 */
+var LIVE = { ready:false, busy:false, store:null, shared:false };
 
 function lsGet(k){
   try { return localStorage.getItem(k) || ""; } catch(e){ return ""; }
@@ -1146,7 +1152,7 @@ function locateMe(){
    也不用打字，是 GPS 之外最省事的一条路。 */
 function loadAddresses(){
   if (LIVE.busy) return;
-  if (!needToken()) return;
+  if (!needOwnToken()) return;
   var btn = document.getElementById("addrBtn");
   btn.disabled = true;
   storeMsg("正在读你麦当劳账号里保存的地址…");
@@ -1155,7 +1161,7 @@ function loadAddresses(){
     .then(function(d){
       if (!d || !d.ok){
         storeMsg((d && d.error) || "读取失败。", "err");
-        document.getElementById("manualBox").open = true;
+        if (d && d.needOwnToken) openTokenBox();
         return;
       }
       var list = d.addresses || [];
@@ -1201,11 +1207,59 @@ function storesFromAddress(a){
     .catch(function(e){ storeMsg("查询失败：" + (e && e.message ? e.message : e), "err"); });
 }
 
+/* 两个入口对 Token 的要求不一样，所以分成两个判断：
+   · 查门店 / 切菜单 —— 公开数据，后端配了演示额度就能直接用
+   · 我存的地址 —— 读的是调用者自己的账号，必须自带 Token
+   前端只负责把话说清楚，真正的把关在 server.py 的 _resolve_token。 */
 function needToken(){
-  if (tokenValue()) return true;
+  if (tokenValue() || LIVE.shared) return true;
   storeMsg("先填 MCP Token（在 open.mcd.cn/mcp 申请）。它只存在你这台设备上。", "err");
+  openTokenBox();
   document.getElementById("tokenInput").focus();
   return false;
+}
+
+function needOwnToken(){
+  if (tokenValue()) return true;
+  storeMsg("「我存的地址」读的是你自己麦当劳账号里的地址，得填你自己的 MCP Token —— 演示额度借不到这里。", "err");
+  openTokenBox();
+  document.getElementById("tokenInput").focus();
+  return false;
+}
+
+function openTokenBox(){
+  var box = document.getElementById("tokenBox");
+  if (box) box.open = true;
+}
+
+/* 后端配了演示额度时，把 Token 框收起来、文案改成"直接点" —— 让访客第一眼
+   看到的是两个按钮，而不是一个挡在路中间的空输入框。没有额度时反过来。 */
+function applyTokenMode(keepOpen){
+  var box = document.getElementById("tokenBox");
+  var summary = document.getElementById("tokenSummary");
+  var hint = document.getElementById("tokenHint");
+  if (!box || !summary || !hint) return;
+  var own = tokenValue();
+  if (LIVE.shared){
+    box.open = keepOpen ? true : false;
+    summary.textContent = "用自己的 MCP Token（可选）";
+    hint.textContent = own
+      ? "已填 —— 现在走你自己的额度。清空后就回到演示额度。"
+      : "不填也行：上面两个按钮花的是作者开放的演示额度（每人每分钟 10 次）。"
+        + "「我存的地址」是例外，它读你自己的账号，必须填。";
+    storeMsg(own ? "点「用我的位置」或「我存的地址」，都不用打字。"
+                 : "直接点「用我的位置」查你身边的门店 —— 不用填任何东西。");
+    var top = document.getElementById("storeText");
+    if (top && !LIVE.store){
+      top.textContent = "现在用的是快照数据。点「用我的位置」，就能换成你身边那家店"
+                      + "此刻真正在售的菜单 —— 每家店今天有什么，并不完全一样。";
+    }
+  } else {
+    box.open = true;
+    summary.textContent = "填入你的 MCP Token（必填）";
+    hint.textContent = "在 open.mcd.cn/mcp 免费申请。只存在你这台设备上，不写进页面、不进 URL。";
+    storeMsg("填好 Token 后点「用我的位置」或「我存的地址」，两条都不用打字。");
+  }
 }
 
 /* 把解析出来的地名回填到手动输入框：万一自动结果不理想，用户能直接改。 */
@@ -1227,7 +1281,10 @@ function initStore(){
   if (saved[1]) kwIn.value = saved[1];
   if (tokenValue()) tokenIn.value = tokenValue();
 
-  tokenIn.onchange = function(){ lsSet(TOKEN_KEY, tokenIn.value.trim()); };
+  tokenIn.onchange = function(){
+    lsSet(TOKEN_KEY, tokenIn.value.trim());
+    applyTokenMode(true);  // 收起会打断输入，所以保持展开
+  };
   document.getElementById("tokenToggle").onclick = function(){
     var showing = tokenIn.type === "text";
     tokenIn.type = showing ? "password" : "text";
@@ -1248,10 +1305,11 @@ function initStore(){
     .then(function(d){
       if (!d || !d.ok) throw new Error("no backend");
       LIVE.ready = true;
+      LIVE.shared = !!d.shared_token;
       document.getElementById("storeForm").hidden = false;
       document.getElementById("storeOff").hidden = true;
-      storeMsg("填 Token 后：点「用我的位置」查你身边的门店，或点「我存的地址」。" + 
-               "两条都不用打字。");
+      // 有演示额度就摆按钮、收 Token 框；没有就反过来。文案在 applyTokenMode 里。
+      applyTokenMode();
     })
     .catch(function(){
       document.getElementById("storeForm").hidden = true;

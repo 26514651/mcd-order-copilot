@@ -27,6 +27,9 @@ mcp-config.local.json
 .env.*
 *.token
 *token*.txt
+# 部署时给后端用的共享演示 Token（放在发布目录里，两端都不该进仓库）
+.mcd-token
+mcd-token
 
 # --------------------------------------- 构建 / 校验脚本的临时产物（不入库）
 _tmp/

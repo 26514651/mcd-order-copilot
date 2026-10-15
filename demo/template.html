@@ -123,6 +123,20 @@ button{font-family:inherit; cursor:pointer; border:none; background:none; color:
 .sitem .sopen{font-size:10.5px;color:var(--ok);font-weight:600}
 .sitem .sopen.shut{color:var(--ink-3)}
 
+/* 定位于地址簿：两个主入口并排，手动输入折叠在下面。
+   麦当劳接口只认地名、不认坐标，这两条是把"我在哪"变成地名的最省事路径。 */
+.sbtn.wide{flex:1 1 0;background:var(--gold);color:#3A2500;box-shadow:0 2px 10px rgba(255,199,44,.35)}
+.sbtn.wide:disabled{opacity:.55;box-shadow:none}
+.sbtn.wide.alt{background:#fff;border:1.5px solid var(--line);color:var(--ink-2);box-shadow:none}
+.smore{margin-top:10px;border-top:1px solid var(--line);padding-top:9px}
+.smore > summary{font-size:12px;font-weight:600;color:var(--ink-2);cursor:pointer;list-style:none;
+  display:flex;align-items:center;gap:5px}
+.smore > summary::-webkit-details-marker{display:none}
+.smore > summary::before{content:"›";color:var(--gold-deep);font-weight:700;font-size:14px;
+  transition:transform .18s;display:inline-block}
+.smore[open] > summary::before{transform:rotate(90deg)}
+.sitem .saddr b{color:var(--ink-2);font-weight:600}
+
 /* ------------------------------------------------------------------ targets */
 .targets{background:var(--container);border-radius:var(--radius-card);padding:4px;margin-top:10px}
 .trow{display:flex;align-items:center;gap:10px;padding:9px 8px 9px 10px;border-radius:var(--radius-el);
@@ -321,15 +335,25 @@ button{font-family:inherit; cursor:pointer; border:none; background:none; color:
 
     <div id="storeForm" hidden>
       <div class="srow2">
-        <input id="cityInput" type="text" enterkeyhint="search" placeholder="城市，如 广州" autocomplete="off">
-        <input id="kwInput" type="text" enterkeyhint="search" placeholder="位置或门店，如 天河" autocomplete="off">
-      </div>
-      <div class="srow2">
         <input id="tokenInput" type="password" placeholder="MCP Token" autocomplete="off"
                spellcheck="false" autocapitalize="off">
         <button class="sbtn ghost" id="tokenToggle" type="button">显示</button>
       </div>
-      <button class="sbtn primary" id="findBtn" type="button">查找附近门店</button>
+
+      <div class="srow2">
+        <button class="sbtn wide" id="geoBtn" type="button">用我的位置</button>
+        <button class="sbtn wide alt" id="addrBtn" type="button">我存的地址</button>
+      </div>
+
+      <details class="smore" id="manualBox">
+        <summary>也可以手动填城市和地标</summary>
+        <div class="srow2">
+          <input id="cityInput" type="text" enterkeyhint="search" placeholder="城市，如 广州" autocomplete="off">
+          <input id="kwInput" type="text" enterkeyhint="search" placeholder="位置或门店，如 天河" autocomplete="off">
+        </div>
+        <button class="sbtn primary" id="findBtn" type="button">查找附近门店</button>
+      </details>
+
       <p class="smsg" id="storeMsg"></p>
       <div class="slist" id="storeList"></div>
     </div>
@@ -983,14 +1007,14 @@ function apiPost(path, body){
   });
 }
 
-function renderStores(stores){
+function renderStores(stores, prefix){
   var box = document.getElementById("storeList");
   box.innerHTML = "";
   if (!stores.length){
-    storeMsg("这个位置没查到门店。换个地标或换个区再试。", "err");
+    storeMsg((prefix || "") + "这个位置没查到门店。换个地标，或用「我存的地址」再试一次。", "err");
     return;
   }
-  storeMsg("查到 " + stores.length + " 家。点一家，换成它此刻的实时菜单。", "ok");
+  storeMsg((prefix || "") + "查到 " + stores.length + " 家。点一家，换成它此刻的实时菜单。", "ok");
 
   stores.forEach(function(s){
     var b = el("button", "sitem");
@@ -1055,12 +1079,7 @@ function loadStore(s){
 
 function findStores(){
   if (LIVE.busy) return;
-  var token = tokenValue();
-  if (!token){
-    storeMsg("先填 MCP Token（在 open.mcd.cn/mcp 申请）。它只存在你这台设备上。", "err");
-    document.getElementById("tokenInput").focus();
-    return;
-  }
+  if (!needToken()) return;
   var city = document.getElementById("cityInput").value.trim();
   var keyword = document.getElementById("kwInput").value.trim();
   if (!city && !keyword){ storeMsg("至少填一个城市或位置。", "err"); return; }
@@ -1081,6 +1100,123 @@ function findStores(){
     .then(function(){ btn.disabled = false; });
 }
 
+/* ------------------------------------------------------------------ locate
+   用我的位置：浏览器给坐标，后端把坐标换成地名，再查门店。麦当劳接口本身
+   不认坐标（实测塞 latitude/longitude 会被静默忽略），这一步转换绕不开。
+   坐标只送到我们自己的后端，换成地名后即丢弃，两边都不留存。
+------------------------------------------------------------------------- */
+function locateMe(){
+  if (LIVE.busy) return;
+  if (!needToken()) return;
+  if (!navigator.geolocation){
+    storeMsg("这台设备的浏览器不支持定位。展开下面的手动输入吧。", "err");
+    document.getElementById("manualBox").open = true;
+    return;
+  }
+  var btn = document.getElementById("geoBtn");
+  btn.disabled = true;
+  storeMsg("正在获取你的位置 —— 浏览器会弹一个授权提示，点「允许」。");
+
+  navigator.geolocation.getCurrentPosition(function(pos){
+    storeMsg("拿到位置了，正在把它换成地名，再查附近门店…");
+    apiPost("/api/geo-stores", { lat: pos.coords.latitude, lng: pos.coords.longitude })
+      .then(function(d){
+        if (!d || !d.ok){
+          storeMsg((d && d.error) || "查询失败。", "err");
+          document.getElementById("manualBox").open = true;
+          return;
+        }
+        var place = d.place || {};
+        rememberPlace(place);
+        renderStores(d.stores || [], place.full ? "定位到 " + place.full + "。" : "");
+      })
+      .catch(function(e){ storeMsg("查询失败：" + (e && e.message ? e.message : e), "err"); })
+      .then(function(){ btn.disabled = false; });
+  }, function(err){
+    btn.disabled = false;
+    var why = err.code === 1 ? "你拒绝了定位授权"
+            : err.code === 2 ? "系统拿不到位置信息"
+            : "定位超时";
+    storeMsg(why + "。可以点「我存的地址」，或者展开手动输入。", "err");
+    document.getElementById("manualBox").open = true;
+  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+}
+
+/* 我存的地址：直接读这个账号在麦当劳留过的收货地址 —— 不过任何第三方，
+   也不用打字，是 GPS 之外最省事的一条路。 */
+function loadAddresses(){
+  if (LIVE.busy) return;
+  if (!needToken()) return;
+  var btn = document.getElementById("addrBtn");
+  btn.disabled = true;
+  storeMsg("正在读你麦当劳账号里保存的地址…");
+
+  apiPost("/api/addresses", {})
+    .then(function(d){
+      if (!d || !d.ok){
+        storeMsg((d && d.error) || "读取失败。", "err");
+        document.getElementById("manualBox").open = true;
+        return;
+      }
+      var list = d.addresses || [];
+      if (!list.length){
+        storeMsg("这个账号还没存过配送地址。可以在麦当劳 App 里存一个，或者展开手动输入。", "err");
+        document.getElementById("manualBox").open = true;
+        return;
+      }
+      renderAddresses(list);
+    })
+    .catch(function(e){ storeMsg("读取失败：" + (e && e.message ? e.message : e), "err"); })
+    .then(function(){ btn.disabled = false; });
+}
+
+function renderAddresses(list){
+  var box = document.getElementById("storeList");
+  box.innerHTML = "";
+  storeMsg("这是你账号里存过的地址。点一个，查它附近的门店。", "ok");
+  list.forEach(function(a){
+    var b = el("button", "sitem");
+    b.type = "button";
+    var left = el("div");
+    left.appendChild(el("div", "sname", a.fullAddress || "（这条地址没有内容）"));
+    var tail = [a.contactName, [a.district, a.street].filter(Boolean).join("")]
+      .filter(Boolean).join(" · ");
+    if (tail) left.appendChild(el("div", "saddr", tail));
+    b.appendChild(left);
+    b.onclick = function(){ storesFromAddress(a); };
+    box.appendChild(b);
+  });
+}
+
+function storesFromAddress(a){
+  if (LIVE.busy) return;
+  var place = { city: a.city, district: a.district, street: a.street, fullAddress: a.fullAddress };
+  storeMsg("正在按「" + ([a.district, a.street].filter(Boolean).join("") || a.city) + "」查附近门店…");
+  apiPost("/api/stores-by-place", place)
+    .then(function(d){
+      if (!d || !d.ok){ storeMsg((d && d.error) || "查询失败。", "err"); return; }
+      rememberPlace(d.place || place);
+      renderStores(d.stores || []);
+    })
+    .catch(function(e){ storeMsg("查询失败：" + (e && e.message ? e.message : e), "err"); });
+}
+
+function needToken(){
+  if (tokenValue()) return true;
+  storeMsg("先填 MCP Token（在 open.mcd.cn/mcp 申请）。它只存在你这台设备上。", "err");
+  document.getElementById("tokenInput").focus();
+  return false;
+}
+
+/* 把解析出来的地名回填到手动输入框：万一自动结果不理想，用户能直接改。 */
+function rememberPlace(place){
+  var cityIn = document.getElementById("cityInput");
+  var kwIn = document.getElementById("kwInput");
+  cityIn.value = place.city || "";
+  kwIn.value = place.street || place.district || "";
+  lsSet(PLACE_KEY, cityIn.value + "\u0000" + kwIn.value);
+}
+
 function initStore(){
   var cityIn = document.getElementById("cityInput");
   var kwIn = document.getElementById("kwInput");
@@ -1098,6 +1234,8 @@ function initStore(){
     this.textContent = showing ? "显示" : "隐藏";
   };
   document.getElementById("findBtn").onclick = findStores;
+  document.getElementById("geoBtn").onclick = locateMe;
+  document.getElementById("addrBtn").onclick = loadAddresses;
   [cityIn, kwIn].forEach(function(inp){
     inp.onkeydown = function(ev){
       if (ev.key === "Enter"){ ev.preventDefault(); findStores(); }
@@ -1112,7 +1250,8 @@ function initStore(){
       LIVE.ready = true;
       document.getElementById("storeForm").hidden = false;
       document.getElementById("storeOff").hidden = true;
-      storeMsg("填 Token 后点查询。城市 + 地标即可，接口不收 GPS 坐标。");
+      storeMsg("填 Token 后：点「用我的位置」查你身边的门店，或点「我存的地址」。" + 
+               "两条都不用打字。");
     })
     .catch(function(){
       document.getElementById("storeForm").hidden = true;

@@ -1,0 +1,42 @@
+{
+  "name": "点单参谋 · 麦当劳餐品营养速查",
+  "short_name": "点单参谋",
+  "description": "在麦当劳点单前，先看清这顿的蛋白、碳水、脂肪和热量。数据来自麦当劳 MCP 官方接口。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#FFFCF3",
+  "theme_color": "#FFFCF3",
+  "categories": ["food", "health", "utilities"],
+  "icons": [
+    {
+      "src": "assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "看全部餐品",
+      "short_name": "全菜单",
+      "url": "./#menu"
+    }
+  ]
+}

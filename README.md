@@ -12,8 +12,27 @@
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
-**▶ 在线演示：<https://mcd-order-copilot.app.workbuddy.host/>** —— 无需 Token、无需登录、无需申请任何东西，手机点开就能用：
+<table>
+<tr>
+<td valign="middle">
+
+**▶ 在线演示：<https://mcd-order-copilot.app.workbuddy.host/>**
+
+无需 Token、无需登录、无需申请任何东西 —— 手机点开就能用：
 查你身边的门店，切到它**此刻**真正在售的菜单。
+
+<sub>打不开？备用地址（纯静态快照版，永久可用）：<br><https://26514651.github.io/mcd-order-copilot/></sub>
+
+</td>
+<td width="200" align="center" valign="middle">
+
+<img src="docs/qr-live-demo.png" alt="手机扫码，直接体验点单参谋" width="170">
+
+<sub>**手机扫码即开**</sub>
+
+</td>
+</tr>
+</table>
 
 > 麦当劳的 MCP Token 只发给报名参赛的开发者，别人拿不到。所以演示页在**服务器端**放了一份共享的**演示额度** ——
 > 访客打开就能点。想用自己的额度，或者要用「我存的地址」（那条读的是调用者自己的账号），再填自己的 Token。
